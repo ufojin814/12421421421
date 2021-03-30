@@ -1,0 +1,702 @@
+import pandas as pd
+import pymysql
+from datetime import datetime, date, timedelta
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import cross_val_score
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.linear_model import SGDRegressor
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import Lasso
+from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVR
+from sklearn.svm import SVR
+from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import VotingRegressor
+from sklearn.metrics import accuracy_score
+from sklearn.ensemble import BaggingClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import BaggingRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.decomposition import PCA
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import KernelPCA
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.preprocessing import StandardScaler
+from scipy.optimize import minimize
+import lightgbm as lgm
+import catboost as cb
+from catboost import CatBoostRegressor
+
+class read_data:
+
+    def __init__(self, pre_date, curr_date):
+        if isinstance(pre_date, date):
+            self.pre_date = pre_date.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            self.pre_date = pre_date
+        if isinstance(curr_date, date):
+            self.curr_date = curr_date.strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            self.curr_date = curr_date
+
+    def get_data_yuqing(self ,db='py_yuqing_1_0', port=3319, host='pyyuqingv1.mysql.com', user='data_read', password='data_1234!@#$'):
+        'get data from mysql database'
+        data={}
+        company_id = 'select company_id, full_name from py_sentiment_daziguan_corpus_company_word_dic'
+        company_class = 'select company_id, class_type from py_sentiment_daziguan_company_class_relation'
+        article_id = 'select article_id, company_id, yuqing_article_id from py_sentiment_daziguan_article_company_relation_integration'
+        yuqing_id = 'select * from py_sentiment_daziguan_article_base_info where DATE(report_date) > "{}" and DATE(report_date) <= "{}"'.format(
+            self.pre_date, self.curr_date)
+
+        def yuqing_merge():
+            get_yuqing = [company_id, company_class, article_id, yuqing_id]
+            for i in range(0, len(get_yuqing)):
+                conn = pymysql.connect(host=host, user=user, password=password, database=db, charset='utf8', port=port,
+                                       cursorclass=pymysql.cursors.DictCursor)
+                query = get_yuqing[i]
+                cursor = conn.cursor()
+                cursor.execute(query)
+                fetch = cursor.fetchall()
+                locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+                data.update(locals()['data{}'.format(str(i))])
+            data_yuqing=data
+            company_id_2 = data_yuqing[0].copy()
+            company_class_2 = data_yuqing[1].copy()
+            article_id_2 = data_yuqing[2].copy()
+            yuqing_id_2 = data_yuqing[3].copy()
+            pipei1 =company_id_2.merge(company_class_2,on='company_id')
+            pipei2 =article_id_2.merge(yuqing_id_2,on='yuqing_article_id')
+            pipei =pipei1.merge(pipei2,on='company_id')
+            for i in list(np.unique(list(pipei['company_id']))):
+                pipei.loc[pipei['company_id']==i,'fumian']=(len(pipei['yuqing_article_id'])-len(pipei[pipei['company_id']==i]))/len(pipei['yuqing_article_id'])
+            pipei.drop_duplicates(subset=['full_name'],inplace=True)
+            return  pipei
+        pipei=yuqing_merge()
+        return pipei
+
+    def get_data_fund(self):
+        data={}
+        py_fund_product_base_info_2_1 = 'select * from py_fund_product_base_info_2_1'
+
+        py_fund_product_base_info_desc_2_1 = 'select * from py_fund_product_base_info_desc_2_1'
+
+        py_fund_money_management_funds_marketing_2_1 = 'select * from py_fund_money_management_funds_marketing_2_1 where ' \
+                                                       'DATE(trading_date) >= "{}" and DATE(trading_date)<="{}"'.format(self.pre_date, self.curr_date)  # 理财型公募基金行情信息表
+
+        py_fund_purchase_information_daily_info_2_1 = 'select * from py_fund_purchase_information_daily_info_2_1 where ' \
+                                                      'DATE(trading_date) >= "{}" and DATE(trading_date) <= "{}"'.format(self.pre_date, self.curr_date)
+
+        py_fund_fund_subscription_info_2_1 = 'select * from py_fund_fund_subscription_info_2_1'
+
+        curr_mk = 'select * from py_fund_non_monetary_funds_marketing_2_1 ' \
+                  'where DATE(trading_date) >= "{}" and DATE(trading_date) <= "{}"'.format(self.pre_date, self.curr_date)
+        def fund_merge():
+            get_fund=[py_fund_product_base_info_2_1,py_fund_product_base_info_desc_2_1,py_fund_money_management_funds_marketing_2_1,py_fund_purchase_information_daily_info_2_1,
+                      py_fund_fund_subscription_info_2_1,curr_mk]
+            for i in range(0,len(get_fund)):
+                conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_fund_2_1', charset='utf8', port=3306,
+                                       cursorclass=pymysql.cursors.DictCursor)
+                query = get_fund[i]
+                cursor = conn.cursor()
+                cursor.execute(query)
+                fetch = cursor.fetchall()
+                locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+                data.update(locals()['data{}'.format(str(i))])
+            return data
+        data_fund=fund_merge()
+        data_2 = {}
+        for i, j in data_fund.items():
+            col = []
+            for v in j.columns:
+                if j[v].isnull().sum() / len(j[v]) <= 0.99:  # .count()=len-isnull().sum()
+                    col.append(v)
+                else:
+                    pass
+            j = j[col]
+            locals()['data{}'.format(i)] = {i: j[col]}  # 不能对遍历对象的代号直接赋值！取出的单个对象自成个体，对其赋值不对整体产生影响，需另外赋值
+            data_2.update(locals()['data{}'.format(str(i))])
+        return data_2
+    def get_data_index(self):
+        data={}
+        hushen300='select * from py_stock_index_marketing_info_2_1 where ' \
+             'index_code = "000300" and DATE(index_date) > "{}" and DATE(index_date) <= "{}"'.format(
+            self.pre_date, self.curr_date)
+        risk_free='select * from py_etl_risk_free_rate_daily_2_1 where ' \
+             'DATE(trading_date) > "{}" and DATE(trading_date) <= "{}"'.format(self.pre_date, self.curr_date)
+        bond='select * from py_stock_index_marketing_info_2_1 where ' \
+             'index_code = "000012" and DATE(index_date) > "{}" and DATE(index_date) <= "{}"'.format(
+            self.pre_date, self.curr_date)
+        future='select * from py_stock_index_marketing_info_2_1 where ' \
+             'index_code = "H11061" and DATE(index_date) > "{}" and DATE(index_date) <= "{}"'.format(
+            self.pre_date, self.curr_date)
+        def index_merge():
+            get_index=[hushen300,bond,future,risk_free]
+            for i in range(0,len(get_index)-1):
+                conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_stock_2_1', charset='utf8', port=3306,
+                                       cursorclass=pymysql.cursors.DictCursor)
+                query = get_index[i]
+                cursor = conn.cursor()
+                cursor.execute(query)
+                fetch = cursor.fetchall()
+                locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+                data.update(locals()['data{}'.format(str(i))])
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_etl',
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_index[len(get_index)-1]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(len(get_index)-1))] = {len(get_index)-1: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(len(get_index)-1))])
+            return data
+        data_index=index_merge()
+        data_2 = {}
+        for i, j in data_index.items():
+            col = []
+            for v in j.columns:
+                if j[v].isnull().sum() / len(j[v]) <= 0.99:  # .count()=len-isnull().sum()
+                    col.append(v)
+                else:
+                    pass
+            j = j[col]
+            locals()['data{}'.format(i)] = {i: j[col]}  # 不能对遍历对象的代号直接赋值！取出的单个对象自成个体，对其赋值不对整体产生影响，需另外赋值
+            data_2.update(locals()['data{}'.format(str(i))])
+        return data_2
+
+class fund_process:
+    def __init__(self,fund,index,yuqing):
+        self.fund_base1=fund[0]
+        self.fund_base2=fund[1]
+        self.fund_base3=fund[3]
+        self.fund_base4=fund[4]
+        self.fund_rate1=fund[2]
+        self.fund_rate2=fund[5]
+        self.index_300 = index[0]
+        self.index_bond = index[1]
+        self.index_future = index[2]
+        self.index_rf = index[3]
+        self.yuqing = yuqing
+        self.index_300=index[0]
+
+    def fund_merge(self):
+        fund_base2=self.fund_base1.merge(self.fund_base2,on='fund_code',how='outer')
+        fund_base3=self.fund_base3.merge(self.fund_base4,on='fund_code',how='outer')
+        fund_base4=fund_base2.merge(fund_base3,on='fund_code',how='outer')
+        self.yuqing = self.yuqing.rename(columns={'full_name':'company_name' })
+        fund_base5=fund_base4.merge(self.yuqing,on='company_name',how='outer')
+        fund_rate1=self.fund_rate1.merge(self.fund_rate2,on=['fund_code','trading_date'],how='outer')
+        fund_base5.drop_duplicates(subset='fund_code',inplace=True)
+        columns_2=['fund_code','full_name','fund_type','company_name','Inception_tna','Inception_date',
+        'investment_idea','investment_scope','investment_strategy','management_rates','trustee_rates','sales_rates','fumian','end_date']
+        columns_filter_2 = []
+        for i in list(fund_base5.columns):
+            for j in columns_2:
+                if i == j:
+                    columns_filter_2.append(j)
+                else:
+                    pass
+        fund_base5 = fund_base5[columns_filter_2]
+        #fund_rate1.loc[:,'万份收益']=fund_rate1['tens_thousands_returns'].astype(float)
+        fund_rate1.loc[:, '累计净值'] = fund_rate1['accumulated_net_value'].astype(float)
+        fund_rate2 = fund_rate1.pivot_table(index='trading_date', columns='fund_code', values='累计净值')
+        fund_rate3=pd.merge(self.index_300[['index_date','change_ratio','close_price']],fund_rate2,left_on='index_date',right_on='trading_date',how='left')
+
+
+        # index可以直接在merge按照其原索引名字进行引用
+        fund_base5['management_rates'].fillna(fund_base5['management_rates'].min(),inplace=True)
+        fund_base5['trustee_rates'].fillna(fund_base5['trustee_rates'].min(), inplace=True)
+        fund_base5['sales_rates'].fillna(fund_base5['sales_rates'].min(), inplace=True)
+        fund_rate3 = fund_rate3.drop('change_ratio', axis=1)
+        fund_rate3 = fund_rate3.interpolate()
+        fund_rate_a = fund_rate3.set_index('index_date')
+        fund_rate_pct = fund_rate_a.pct_change()
+        fund_rate_pct = fund_rate_pct.astype(float)
+        for i in list(fund_rate_pct.columns):
+            if any(fund_rate_pct[i] >= 0.15):
+                fund_rate_pct = fund_rate_pct.drop(i, axis=1)
+        return fund_rate_pct, fund_base5
+
+class fund_learn:
+    def __init__(self,fund_rate_pct,fund_base,timecut):
+        self.fund_rate_pct=fund_rate_pct
+        self.fund_base=fund_base
+        self.tc=timecut
+
+    def fund_rate_pre(self):
+        fund_rate_pct=self.fund_rate_pct
+        fund_base=self.fund_base
+
+        y_1=np.array(fund_rate_pct.iloc[self.tc+2:len(fund_rate_pct)-self.tc+1,:])
+        def b(x):
+            if x >= 0:
+                y = 1
+            else:
+                y = -1
+            return y
+
+        fund_rate_b = fund_rate_pct.applymap(lambda x: b(x))
+        y_2=np.array(fund_rate_b.iloc[self.tc+2:len(fund_rate_b)-self.tc+1,:])
+        c_1, c_2, c_3, c_4, c_5 = {}, [], [], [], []
+        for i in range(1, len(fund_rate_pct), 1):
+            d_1 = {i: fund_rate_pct.iloc[i:i + self.tc, :]}
+            d_2 = np.nanmean(d_1[i], axis=0)
+            d_3 = np.nanstd(d_1[i], axis=0)
+            d_4 = np.nanmin(d_1[i], axis=0)
+            d_5 = np.nanprod(d_1[i] + 1, axis=0) - 1
+            c_1.update(d_1)
+            c_2.append(d_2)
+            c_3.append(d_3)
+            c_4.append(d_4)
+            c_5.append(d_5)
+        e_2 = (np.array(c_2) - np.nanmean(np.array(c_2), axis=0)) / np.nanstd(np.array(c_2), axis=0)
+        e_3 = (np.array(c_3) - np.nanmean(np.array(c_3), axis=0)) / np.nanstd(np.array(c_3), axis=0)
+        e_4 = (np.array(c_4) - np.nanmean(np.array(c_4), axis=0)) / np.nanstd(np.array(c_4), axis=0)
+        e_5 = (np.array(c_5) - np.nanmean(np.array(c_5), axis=0)) / np.nanstd(np.array(c_5), axis=0)
+        f_2, f_3, f_4, f_5 = e_2[0:len(e_2) - self.tc, :], e_3[0:len(e_3) - self.tc, :], e_4[0:len(e_4) - self.tc, :], e_5[0:len(e_5) - self.tc,:]
+        x_1,x_2,x_3,x_4=f_2[:len(f_2) - self.tc, :], f_3[:len(f_3) - self.tc, :], f_4[:len(f_4) - self.tc, :], f_5[:len(f_5) - self.tc,:]
+        x_1_re,x_2_re,x_3_re,x_4_re,y_1_re,y_2_re=x_1.reshape(-1,1),x_2.reshape(-1,1),x_3.reshape(-1,1),x_4.reshape(-1,1),y_1.reshape(-1,1),y_2.reshape(-1,1)
+        x_5 = fund_rate_pct.iloc[self.tc+1:len(fund_rate_pct)-self.tc,:]
+        fund_base.drop_duplicates(subset='fund_code',inplace=True)
+        '''
+        for i in list(np.unique(list(fund_base['fund_code']))):
+            for j in list(np.unique(list(x_5.columns))):
+                if i==j:
+                    loc这样用容易报错，尽量不要这样用
+                    x_5.loc[:, j]=fund_base.loc[fund_base['fund_code']==i,'fund_type']
+                else:
+                    pass
+        '''
+        fund_type=fund_base.pivot_table(index='fund_code', values='fund_type')
+        for i in list(np.unique(list(fund_type.index))):
+            if i in list(np.unique(list(x_5.columns))):
+                #.loc得到的结果是一个包含col的series，不能直接赋值
+                a=int(fund_type.loc[ i, :])
+                x_5.loc[:, i] = a
+            else:
+                pass
+        x_5['close_price']=1
+        def c(x):
+            if x == 99:
+                x = 6
+            else:
+                pass
+            return x
+        x_5=x_5.applymap(lambda x: c(x))
+        x_5=np.array(x_5)
+        x_5=x_5.astype(float)
+        x_5_re=x_5.reshape(-1,1)
+        return c_1, x_1,x_2, x_3, x_4,x_5,y_1,y_2,x_1_re,x_2_re,x_3_re,x_4_re,x_5_re,y_1_re,y_2_re
+        # cumprod返回一串，np.nanprod返回最后一行
+
+class fund_quant:
+    def __init__(self,x_1_re,x_2_re,x_3_re,x_4_re,x_5_re,y_1_re,y_2_re):
+        self.x_1=x_1_re
+        self.x_2=x_2_re
+        self.x_3 = x_3_re
+        self.x_4 = x_4_re
+        self.x_5=x_5_re
+        self.y_1 = y_1_re
+        self.y_2 = y_2_re
+
+    def prework(self,test_size=0.7,random_state=42):
+        data=np.hstack((self.x_1,self.x_2,self.x_3,self.x_4,self.x_5,self.y_1,self.y_2))
+        data=data[~np.isnan(data).any(axis=1)]
+        train_x, test_x, train_y, test_y = train_test_split(data[:,0:5], data[:,5], test_size=test_size, random_state=random_state)
+        return train_x, test_x, train_y, test_y
+
+    def lin(self,test_x,test_y):
+        # np.array可用来转化dataframe，但array合并要用vstack等，或者np.concatenate()
+        # nan可参与运算，但结果为nan，None则不能参与运算
+        # pd.isna和pd.isnull一样,不能用于array，array要用np.isnan
+        lin_reg = LinearRegression()
+        lin_reg.fit(test_x, test_y)
+        y_lin_pred = lin_reg.predict(test_x)
+        # 均方误差
+        lin_rmse = np.sqrt(mean_squared_error(test_y, y_lin_pred))
+        # 交叉打分
+        lin_scores = cross_val_score(lin_reg, test_x, test_y, scoring="neg_mean_squared_error", cv=10)
+        return lin_reg
+
+    def tree(self,test_x,test_y):
+        # 决策树模型，不同于上述线性模型，可以用于发现非线性关系
+        tree_reg = DecisionTreeRegressor(max_depth=50)
+        tree_reg.fit(test_x, test_y)
+        #y_tree_pred = tree_reg.predict(test_x)
+        #tree_rmse = np.sqrt(mean_squared_error(test_y, y_tree_pred))
+        # Scikit-Learn 交叉验证功能期望的是效用函数（越大越好）而不是损失函数（越低越好），因此得分函数实际上与 MSE 相反（即负值），这就是为什么前面的代码在计算平方根之前先计算-scores
+        # 决策树打分
+        #tree_scores = cross_val_score(tree_reg, test_x, test_y, scoring="neg_mean_squared_error", cv=10)
+        return tree_reg
+
+    def forest(self,test_x,test_y):
+        # 随机森林
+        forest_reg = RandomForestRegressor(n_jobs=-1)
+        forest_reg.fit(test_x, test_y)
+        #y_forest_pred = forest_reg.predict(test_x)
+        #forest_reg_rmse = np.sqrt(mean_squared_error(test_y, y_forest_pred))
+        #forest_scores = cross_val_score(forest_reg, test_x, test_y, scoring="neg_mean_squared_error", cv=10)
+        return forest_reg
+
+    def sgd(self,test_x,test_y):
+        # 梯度下降
+        sgd_reg = SGDRegressor(n_iter_no_change=50, penalty=None, eta0=0.1)
+        sgd_reg.fit(test_x, test_y)
+        #y_sgd_pred = sgd_reg.predict(test_x)
+        #sgd_reg_rmse = np.sqrt(mean_squared_error(test_y, y_sgd_pred))
+        #sgd_scores = cross_val_score(sgd_reg, test_x, test_y, scoring="neg_mean_squared_error", cv=10)
+        #sgd_reg.intercept_, sgd_reg.coef_
+        return sgd_reg
+
+    def poly_lin(self,test_x,test_y,degree=3):
+        # 多项式回归
+        poly_features = PolynomialFeatures(degree=degree, include_bias=False)
+        x_poly = poly_features.fit_transform(test_x)
+        lin_reg = LinearRegression()
+        lin_reg.fit(x_poly, test_y)
+        lin_reg.intercept_, lin_reg.coef_
+        return lin_reg
+
+    def ridge(self,test_x,test_y,alpha=1):
+        # ridge
+        ridge_reg = Ridge(alpha=alpha, solver="cholesky")
+        ridge_reg.fit(test_x, test_y)
+        ridge_reg.intercept_, ridge_reg.coef_
+        return ridge_reg
+
+    def lasso(self,test_x,test_y,alpha=0.1):
+        # lasso
+        lasso_reg = Lasso(alpha=alpha)
+        lasso_reg.fit(test_x, test_y)
+        lasso_reg.intercept_, lasso_reg.coef_
+        return lasso_reg
+
+    def elastic(self,test_x, test_y,alpha=0.1):
+        # ElasticNet
+        elastic_net = ElasticNet(alpha=alpha, l1_ratio=0.5)
+        elastic_net.fit(test_x, test_y)
+        elastic_net.intercept_, elastic_net.coef_
+        return elastic_net
+
+    def svm(self,test_x, test_y,choice):
+        # svm回归，线性及非线性,c代表正则化的大小，其中linearsvr数据需标准化和中心化
+        if choice == 0:
+            regressor = LinearSVR(epsilon=1.5)
+            regressor.fit(test_x, test_y)
+        elif choice == 1:
+            regressor = SVR(kernel="poly", degree=2, C=100, epsilon=0.1)
+            regressor.fit(test_x, test_y)
+        else:
+            pass
+        return regressor
+
+    def voting(self,test_x, test_y):
+        # voteregressor
+        lin_clf = LinearRegression()
+        tree_clf = DecisionTreeRegressor(max_depth=10)
+        rnd_clf = RandomForestRegressor()
+        lsvm_clf = LinearSVR(epsilon=1.5)
+        svm_clf = SVR(kernel="poly", degree=2, C=100, epsilon=0.1)
+        ridge_clf = Ridge(alpha=1, solver="cholesky")
+        lasso_clf = Lasso(alpha=0.1)
+        elas_clf = ElasticNet(alpha=0.1, l1_ratio=0.5)
+        sgd_clf = SGDRegressor(n_iter_no_change=50, penalty=None, eta0=0.1)
+        voting_clf = VotingRegressor(
+            estimators=[('svc', lsvm_clf), ('svr', svm_clf), ('lin', lin_clf), ('tree', tree_clf),
+                        ('ridge', ridge_clf), ('lasso', lasso_clf), ('elas', elas_clf), ('sgd', sgd_clf)])
+        voting_clf.fit(test_x, test_y)
+        return voting_clf
+
+    def gbrt(self,test_x,test_y):
+        gbrt_reg = GradientBoostingRegressor(max_depth=10, n_estimators=100, learning_rate=1.0)
+        gbrt_reg.fit(test_x, test_y)
+        errors = [mean_squared_error(test_y, y_pred) for y_pred in gbrt_reg.staged_predict(test_x)]
+        bst_n_estimators = np.argmin(errors)
+        gbrt_best_reg = GradientBoostingRegressor(max_depth=10, n_estimators=bst_n_estimators)
+        gbrt_best_reg.fit(test_x, test_y)
+        return gbrt_best_reg
+
+    def bagging(self,test_x,test_y,choice):
+        if choice==0:
+            bag_clf = BaggingRegressor(LinearRegression(), n_estimators=500,
+                                       max_samples=100, bootstrap=True, n_jobs=-1, oob_score=True)
+            bag_clf.fit(test_x, test_y)
+        elif choice==1:
+            bag_clf = BaggingRegressor(DecisionTreeRegressor(), n_estimators=500,
+                                       max_samples=100, bootstrap=True, n_jobs=-1, oob_score=True)
+            bag_clf.fit(test_x, test_y)
+        elif choice==2:
+            bag_clf = BaggingRegressor(LinearSVR(epsilon=1.5), n_estimators=500,
+                                       max_samples=100, bootstrap=True, n_jobs=-1, oob_score=True)
+            bag_clf.fit(test_x, test_y)
+        elif choice==3:
+            bag_clf = BaggingRegressor(SVR(kernel="poly", degree=2, C=100, epsilon=0.1), n_estimators=500,
+                                       max_samples=100, bootstrap=True, n_jobs=-1, oob_score=True)
+            bag_clf.fit(test_x, test_y)
+        else:
+            pass
+        return bag_clf
+
+    def ada(self,test_x,test_y,choice):
+        if choice==0:
+            ada_clf = AdaBoostRegressor(LinearRegression(), n_estimators=200,
+                                        learning_rate=0.5)
+            ada_clf.fit(test_x, test_y)
+        if choice==1:
+            ada_clf = AdaBoostRegressor(DecisionTreeRegressor(), n_estimators=200,
+                                        learning_rate=0.5)
+            ada_clf.fit(test_x, test_y)
+        if choice==2:
+            ada_clf = AdaBoostRegressor(LinearSVR(epsilon=1.5), n_estimators=200,
+                                        learning_rate=0.5)
+            ada_clf.fit(test_x, test_y)
+        if choice==3:
+            ada_clf = AdaBoostRegressor(SVR(kernel="poly", degree=3, C=100, epsilon=0.1), n_estimators=200,
+                                        learning_rate=0.5)
+            ada_clf.fit(test_x, test_y)
+        else:
+            pass
+        return ada_clf
+
+    def cat(self,test_x,test_y):
+        test_x=pd.DataFrame(test_x)
+        test_x[4]=test_x[4].astype(int)
+        test_y=pd.DataFrame(test_y)
+        cat_clf=cb.CatBoostRegressor(iterations=2, depth=5, learning_rate=0.5, loss_function='RMSE',
+                                      thread_count=-1,logging_level='Verbose')
+        cat_clf.fit(test_x,test_y,cat_features=[4])
+        return cat_clf
+
+    def score(self,i):
+        result=[]
+        #locals为局部变量，在函数内调用会报错，故此要用globals，但最好只是调用，如果修改会改变原值
+        for _ in range(1,i,1):
+            scores = cross_val_score(globals()['regressor_{}'.format(_)], train_x, train_y,
+                                     scoring="neg_mean_squared_error",
+                                     cv=10, n_jobs=-1)
+            result.append(scores)
+        return result
+
+    def mse(self,i):
+        result={}
+        for _ in range(1,i+1,1):
+            try:
+                y_pred = globals()['regressor_{}'.format(_)].predict(train_x)
+                rmse = np.sqrt(mean_squared_error(train_y, y_pred))
+                new={'regressor_{}'.format(_): rmse}
+                result.update(new)
+            except:
+                pass
+        return result
+
+class learn:
+    def __init__(self,best_reg,x_1,x_2,x_3,x_4,x_5,y_1):
+        self.best_reg=best_reg
+        self.x_1=x_1
+        self.x_2=x_2
+        self.x_3=x_3
+        self.x_4=x_4
+        self.x_5=x_5
+        self.y_1=np.array(list(y_1.columns)).reshape(-1,1)
+        self.an=y_1
+
+    def y_sort(self,num):
+        y_rate,y_pred_2=[],[]
+        for i in range(0,self.x_1.shape[1],1):
+            #不reshape不能用hstack
+            x=np.hstack((self.x_1[:,i].reshape(-1,1),self.x_2[:,i].reshape(-1,1),self.x_3[:,i].reshape(-1,1),self.x_4[:,i].reshape(-1,1),self.x_5[:,i].reshape(-1,1)))
+            x=x[~np.isnan(x).any(axis=1)]
+            try:
+                x=pd.DataFrame(x)
+                x[4]=x[4].astype(int)
+                y_pred = self.best_reg.predict(x)
+                # np可以直接用min（），mx（）等前置或.min(),.max()后置，但用comprod要加np
+                y_cum = np.cumprod(y_pred + 1)
+                y_cum_2 = y_cum[-1]
+            except:
+                y_pred=0
+                y_cum_2=0
+            y_pred_2.append(y_pred)
+            y_rate.append(y_cum_2)
+        y_2=np.hstack(y_rate).reshape(-1,1)
+        y=np.hstack((self.y_1,y_2))
+        y_df=pd.DataFrame(y)
+        y_weight=[]
+        for _ in self.an.columns:
+            try:
+                weight=self.an[_].count()/len(self.an[_])
+                y_weight.append(weight)
+            except:
+                weight=1
+                y_weight.append(weight)
+        y_weight=pd.DataFrame(y_weight)
+        #相同length可以直接赋值，将自动匹配达到merge的效果，但是如果出现不同元素则会赋予全部nan。需注意两个dataframe不可直接相除
+        y_df[2]=y_weight
+        y_df[3]=y_df[1].astype(float)/y_df[2]
+        y_df=y_df[y_df[2]>=0.8]
+        y_df_2 = y_df.sort_values(by=3, ascending=False)
+        y_df_2 = y_df_2.iloc[:num, :]
+        return y_df,y_df_2,y_pred_2,y_weight
+
+    def comparision(self,y,y_df,fund_base,fund_rate_pct,y_weight):
+        fund_pool = y.merge(fund_base, left_on=0, right_on='fund_code', how='inner')
+        test = fund_rate_pct + 1
+        test = test.astype(float)
+        test = test.cumprod()
+        test = test.iloc[-1, :]
+        test = pd.DataFrame(test).reset_index()
+        test['weight'] = y_weight
+        test['rate_weighted'] = test[test.columns[1]].astype(float) / test['weight']
+        fund_pool_2 = fund_pool.merge(test, left_on=0, right_on='index', how='inner')
+        fund_pool_2 = fund_pool_2[[0, 3, fund_pool_2.columns[-1]]]
+        fund_pool_com = fund_pool_2.merge(fund_base, left_on=0, right_on='fund_code', how='inner')
+        fund_pool_3 =y_df.merge(test, left_on=0, right_on='index', how='inner')
+        fund_pool_3 = fund_pool_3[[0, 3, fund_pool_3.columns[-1]]]
+        fund_pool_3=fund_pool_3.merge(fund_base,left_on=0,right_on='fund_code',how='inner')
+        return fund_pool_com,fund_pool_3
+
+class rp:
+    def __init__(self,fund_pool_2,fund_rate_pct):
+        self.fund_pool_2=fund_pool_2
+        self.fund_rate_pct=fund_rate_pct
+        self.fund_pool_rate=self.fund_rate_pct[list(self.fund_pool_2[0])]
+        self.fund_pool_rate.dropna(how='all',inplace=True)
+        scaler=StandardScaler()
+        scaler.fit(self.fund_pool_rate)
+        self.fund_pool_rate_st=scaler.transform(self.fund_pool_rate)
+        self.fund_pool_rate_st=self.fund_pool_rate_st
+        imp_mean = IterativeImputer(random_state=0, estimator=ExtraTreesRegressor(n_estimators=10, random_state=0))
+        imp_mean.fit(self.fund_pool_rate_st)
+        self.fund_pool_rate_st_2 = imp_mean.transform(self.fund_pool_rate_st)
+
+
+    def cov(self,w=np.ones(100)):
+        cov_matrix=np.cov(self.fund_pool_rate_st_2.T,ddof=0)
+        cov_matrix_2=np.diag(w).dot(cov_matrix).dot(np.diag(w).T)
+        res = minimize(w, method='nelder-mead', options={'xatol': 1e-8, 'disp': True})
+
+
+
+
+
+
+
+
+
+
+
+
+if __name__=='__main__':
+    # 可以使用count()计算str或list中某元素出现次数，也可以使用np.where计算某元素在dataframe中的位置
+    print('数据读取开始时间：'+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    load=read_data('2020-01-01','2021-03-23')  #strftime不接受数值，只接受str和date
+    data_yuqing=load.get_data_yuqing()
+    data_fund=load.get_data_fund()
+    data_index=load.get_data_index()
+    print('数据读取结束时间：'+datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    print('基金整合处理开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_load=fund_process(fund=data_fund,index=data_index,yuqing=data_yuqing)
+    fund_rate_pct,fund_base=fund_load.fund_merge()
+    fund_load_2 = fund_learn(fund_rate_pct=fund_rate_pct, fund_base=fund_base, timecut=5)
+    c_1, x_1, x_2, x_3, x_4, x_5,y_1, y_2, x_1_re, x_2_re, x_3_re, x_4_re,x_5_re, y_1_re, y_2_re = fund_load_2.fund_rate_pre()
+    #fund_rate_pr=fund_load.fund_rate_pro(fund_rate)
+
+    print('基金量化处理开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_load_3=fund_quant(x_1_re=x_1_re,x_2_re=x_2_re,x_3_re=x_3_re,x_4_re=x_4_re,x_5_re=x_5_re,y_1_re=y_1_re,y_2_re=y_2_re)
+    train_x, test_x, train_y, test_y=fund_load_3.prework()
+    print('linear回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_1=fund_load_3.lin(test_x,test_y)
+    print('决策树回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_2 = fund_load_3.tree(test_x, test_y)
+    print('随机森林回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_13 = fund_load_3.forest(test_x, test_y)
+    print('梯度下降回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_4 = fund_load_3.sgd(test_x, test_y)
+    print('多项式linear回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_5 = fund_load_3.poly_lin(test_x, test_y)
+    print('ridge回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_6 = fund_load_3.ridge(test_x, test_y)
+    print('lasso回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_7 = fund_load_3.lasso(test_x, test_y)
+    print('svm回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_8 = fund_load_3.svm(test_x, test_y,choice=1)
+    print('elas回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_3 = fund_load_3.elastic(test_x, test_y)
+    print('bagging回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_10 = fund_load_3.bagging(test_x, test_y,choice=1)
+    print('adaboost回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_11 = fund_load_3.ada(test_x, test_y,choice=1)
+    print('voting回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_12 = fund_load_3.voting(test_x, test_y)
+    print('gbrt回归开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #regressor_9 = fund_load_3.gbrt(test_x, test_y)
+    print('量化评分开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    regressor_14 = fund_load_3.cat(test_x, test_y)
+    #result=fund_load_3.score(10)
+    #result=fund_load_3.mse(13)
+    #best=min(zip(result.values(), result.keys()))
+    #best_reg=globals()[best[1]]
+    print('处理1开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    #字符串转化为日期可以strptime和pd.to_datetime(date, format='%d-%m-%Y %I:%M %p')
+    fund_load_4=learn(best_reg=regressor_13,x_1=x_1,x_2=x_2,x_3=x_3,x_4=x_4,x_5=x_5,y_1=fund_rate_pct)
+    y_unfixed,y,y_pred,y_weight=fund_load_4.y_sort(100)
+    fund_pool_2,fund_pool_3=fund_load_4.comparision(y=y,y_df=y_unfixed,fund_base=fund_base,fund_rate_pct=fund_rate_pct,y_weight=y_weight)
+    print('处理2开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_load_5 = learn(best_reg=regressor_11, x_1=x_1, x_2=x_2, x_3=x_3, x_4=x_4, x_5=x_5, y_1=fund_rate_pct)
+    y_unfixed, y, y_pred, y_weight = fund_load_5.y_sort(100)
+    fund_pool_22, fund_pool_32 = fund_load_5.comparision(y=y, y_df=y_unfixed, fund_base=fund_base,fund_rate_pct=fund_rate_pct, y_weight=y_weight)
+    print('处理3开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+
+    fund_load_6 = learn(best_reg=regressor_1, x_1=x_1, x_2=x_2, x_3=x_3, x_4=x_4, x_5=x_5, y_1=fund_rate_pct)
+    y_unfixed, y, y_pred, y_weight = fund_load_6.y_sort(100)
+    fund_pool_23, fund_pool_33 = fund_load_6.comparision(y=y, y_df=y_unfixed, fund_base=fund_base,
+                                                       fund_rate_pct=fund_rate_pct, y_weight=y_weight)
+    print('处理4开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_load_7 = learn(best_reg=regressor_2, x_1=x_1, x_2=x_2, x_3=x_3, x_4=x_4, x_5=x_5, y_1=fund_rate_pct)
+    y_unfixed, y, y_pred, y_weight = fund_load_7.y_sort(100)
+    fund_pool_24, fund_pool_34 = fund_load_7.comparision(y=y, y_df=y_unfixed, fund_base=fund_base,
+                                                         fund_rate_pct=fund_rate_pct, y_weight=y_weight)
+    print('处理5开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_load_8 = learn(best_reg=regressor_4, x_1=x_1, x_2=x_2, x_3=x_3, x_4=x_4, x_5=x_5, y_1=fund_rate_pct)
+    y_unfixed, y, y_pred, y_weight = fund_load_8.y_sort(100)
+    fund_pool_25, fund_pool_35 = fund_load_8.comparision(y=y, y_df=y_unfixed, fund_base=fund_base,
+                                                         fund_rate_pct=fund_rate_pct, y_weight=y_weight)
+    print('输出开始时间：' + datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    fund_real_pool=pd.concat([fund_pool_2,fund_pool_22,fund_pool_23,fund_pool_24,fund_pool_25],keys=['forest','ada','lin','tree','sgd'])
+    fund_real_pool_idx=fund_real_pool.duplicated(0,keep='last')
+    #fund_real_pool=fund_real_pool.query('0==fund_real_pool[0][fund_real_pool_idx].reset_index()[0]')
+    for i in list(fund_real_pool[0]):
+        fund_real_pool.loc[fund_real_pool[0]==i,'count']=fund_real_pool[fund_real_pool[0]==i][0].count()
+    fund_real_pool=fund_real_pool[fund_real_pool['count']>1]
+    fund_real_pool.drop_duplicates(subset=0,keep='first',inplace=True)
+    fund_real_pool.to_excel('C:/Users/Administrator/Desktop/top_100.xlsx')
+
+
+
+    #label_encoder = LabelEncoder()
+    #cate_1 = label_encoder.fit_transform(fund_base['fund_type'])
+    #onehotencoder不能有nan值，不能是一维数组。
+    #fund_base['fund_type']=fund_base['fund_type'].astype(str)
+    #fund_base['management_rates']=fund_base['management_rates'].astype(str)
+    #fund_type=list(pd.unique(list(fund_base['fund_type'])))
+    #management_rates=list(pd.unique(list(fund_base['management_rates'])))
+    #enc = OneHotEncoder(categories=[fund_type,management_rates])
+    #enc.fit([list(pd.unique(list(fund_base['fund_type']))),list(pd.unique(list(fund_base['management_rates'])))])
