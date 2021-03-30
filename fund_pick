@@ -1,0 +1,366 @@
+import pandas as pd
+import pymysql
+from datetime import datetime, date, timedelta
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import cross_val_score
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.linear_model import SGDRegressor
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import Ridge
+from sklearn.linear_model import Lasso
+from sklearn.linear_model import ElasticNet
+from sklearn.linear_model import LogisticRegression
+from sklearn.svm import LinearSVR
+from sklearn.svm import SVR
+from sklearn.ensemble import VotingClassifier
+from sklearn.ensemble import VotingRegressor
+from sklearn.metrics import accuracy_score
+from sklearn.ensemble import BaggingClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import BaggingRegressor
+from sklearn.tree import DecisionTreeRegressor
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.decomposition import PCA
+from sklearn.pipeline import Pipeline
+from sklearn.decomposition import KernelPCA
+from sklearn.ensemble import AdaBoostRegressor
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+from sklearn.experimental import enable_iterative_imputer
+from sklearn.impute import IterativeImputer
+from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.preprocessing import StandardScaler
+from scipy.optimize import minimize
+import lightgbm as lgm
+import catboost as cb
+from catboost import CatBoostRegressor
+
+class read_data:
+    def __init__(self,start_date,end_date):
+        self.start_date=start_date
+        self.end_date=end_date
+
+    def bank_read(self):
+        data={}
+        #理财top10资产
+        py_product_assets_position_top10='select * from py_product_assets_position_top10 where report_date>="{}" and ' \
+                                         'report_date<="{}"'.format(self.start_date,self.end_date)
+        #理财持仓资产分类
+        py_product_assets_position_type='select * from py_product_assets_position_type where report_date>="{}" and ' \
+                                         'report_date<="{}"'.format(self.start_date,self.end_date)
+        #理财基础信息,'产品类型（固定收益类）:\r\n1.固定收益类\r\n2.权益类\r\n3.商品及金融衍生品类\r\n4.混合类','产品子类型:1.纯固收2.固收+ 3.偏股混合4.偏债混合'
+        product_base_bank_data_lc='select * from product_base_bank_data_lc'
+        product_base_bank_data_lc_desc='select cp_id,product_type,is_subsidiary_products,product_type_son from product_base_bank_data_lc_desc'
+        #理财净值
+        product_jz_lc='select * from product_jz_lc where jz_date>="{}" and jz_date<="{}"'.format(self.start_date,self.end_date)
+        get_bank=[product_base_bank_data_lc,product_base_bank_data_lc_desc,py_product_assets_position_type,py_product_assets_position_top10,product_jz_lc]
+        for i in range(0, len(get_bank)):
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_product',
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_bank[i]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(i))])
+        return data
+
+    def fund_read(self):
+        data={}
+        py_fund_product_base_info_2_1 = 'select * from py_fund_product_base_info_2_1'
+
+        py_fund_product_base_info_desc_2_1 = 'select * from py_fund_product_base_info_desc_2_1'
+
+        py_fund_monetary_funds_marketing_2_1='select * from py_fund_monetary_funds_marketing_2_1 where ' \
+                                                       'DATE(trading_date) >= "{}" and DATE(trading_date)<="{}"'.format(self.start_date, self.end_date)  # 货币型公募基金行情信息表'
+
+        py_fund_money_management_funds_marketing_2_1 = 'select * from py_fund_money_management_funds_marketing_2_1 where ' \
+                                                       'DATE(trading_date) >= "{}" and DATE(trading_date)<="{}"'.format(self.start_date, self.end_date)  # 理财型公募基金行情信息表
+
+        py_fund_non_monetary_funds_marketing_2_1 = 'select * from py_fund_non_monetary_funds_marketing_2_1 ' \
+                  'where DATE(trading_date) >= "{}" and DATE(trading_date) <= "{}"'.format(self.start_date, self.end_date)  # 非货币型公募基金行情信息表
+        get_fund=[py_fund_product_base_info_2_1,py_fund_product_base_info_desc_2_1,py_fund_monetary_funds_marketing_2_1,py_fund_money_management_funds_marketing_2_1,
+                  py_fund_non_monetary_funds_marketing_2_1]
+        for i in range(0, len(get_fund)):
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_fund_2_1',
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_fund[i]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(i))])
+        return data
+
+    def index_read(self):
+        hs300 = 'select index_date, index_code, close_price from py_stock_index_marketing_info_2_1 where ' \
+             'index_code ="000300" and DATE(index_date) > "{}" and DATE(index_date) <= "{}"'.format(self.start_date, self.end_date)
+
+
+        risk_free = 'select trading_date, bond_1y, shibor_1m from py_etl_risk_free_rate_daily_2_1 where ' \
+             'DATE(trading_date) > "{}" and DATE(trading_date) <= "{}"'.format(self.start_date, self.end_date)
+        get_index=[hs300 , risk_free]
+        db=['py_stock_2_1','py_etl']
+        data={}
+        for i in range(0, len(get_index)):
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database=db[i],
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_index[i]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(i))])
+        return data
+
+class handle:
+    def __init__(self,data_bank,data_fund,data_index):
+        self.data_bank=data_bank
+        self.data_fund=data_fund
+        self.data_index=data_index
+
+    def merge_bank(self):
+        data_base_1=self.data_bank[0]
+        data_base_2=self.data_bank[1]
+        data_nv = self.data_bank[4]
+        data_rf=self.data_index[1][['trading_date','bond_1y']].set_index('trading_date')
+        data_300=self.data_index[0][['index_date', 'close_price']]
+        data_300['index_date'] = data_300['index_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_300=data_300.set_index('index_date')
+        data_300=data_300.astype(float)
+        data_base=data_base_1.merge(data_base_2,on='cp_id',how='left')
+        data_nv['jz_zm_day']=data_nv['jz_zm_day'].astype(float)
+        data_rate=data_nv.pivot_table(index='jz_date', columns='cp_id', values='jz_zm_day')
+
+        #data_rate=data_rate.interpolate(limit_area='inside'),使用inside仅对内部进行填充
+        data_rate_merge = data_rate.reset_index()
+        #对时间字符串merge，务必要先使用strftime,否则·可能无结果。
+        data_rate_merge['jz_date'] = data_rate_merge['jz_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_rate_merge=data_rate_merge.set_index('jz_date')
+        data_rate_merge=data_rate_merge.merge(data_300,left_index=True,right_index=True,how='left')
+        keys = pd.DataFrame(list(data_rate_merge.columns), columns=['cp_id'])
+        data_base = data_base.merge(keys, left_on='cp_id', right_on='cp_id', how='inner')
+        #data_rate_merge_ratio = data_rate_merge.pct_change(limit=1)
+        #如果不加limit，pct_change默认即使只有一个值也要进行计算并对缺失值填充
+        data_rate_rf=float(data_rf.iloc[0,0])  #无风险利率
+        # 市场组合利率年化
+        data_rate_market=float((data_300.iloc[-1,0]-data_300.iloc[0,0])/data_300.iloc[0,0])*365/(pd.to_datetime(data_300.index)[-1]-pd.to_datetime(data_300.index)[0]).days
+        lens=[]
+        values=[]
+        r_base=[]
+        std=[]
+        sharpe=[]
+        jensen=[]
+        for i in data_rate_merge.columns:
+            #每个产品跨越天数
+            count_1=(pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[-1])-pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[0])).days
+            lens.append(count_1)
+            #年化回报
+            count_2=(data_rate_merge[i][data_rate_merge[i].isna()==False][-1]-data_rate_merge[i][data_rate_merge[i].isna()==False][0])/data_rate_merge[i][data_rate_merge[i].isna()==False][0]*365/count_1
+            values.append(count_2)
+            #iloc【1，：】求出来是array，需要用索引变成值,.values可以求到切片出来的dataframe等结构下的值，不用values最终结果是切片，不能直接计算！但iloc[1,1]等指定行列可以求出具体值,
+            # 包括直接在后索引，如同时定位具体横纵坐标，则可以取到数值，如仅一个坐标，哪怕只有一个数值也是一个切片。
+            #市场组合年化回报
+            try:
+                count_3 = (data_300[data_300.index <= pd.to_datetime(
+                    data_rate_merge[i][data_rate_merge[i].isna() == False].index[-1])].iloc[-1, 0] - data_300[
+                               data_300.index >= pd.to_datetime(
+                                   data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]) / \
+                          data_300[data_300.index >= pd.to_datetime(
+                              data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]*365/count_1
+            except:count_3=data_rate_market
+            r_base.append(count_3)
+            #标准差
+            try:
+                count_4=np.sqrt(np.var(data_rate_merge[i])*365/count_1)
+            except:
+                count_4=np.nan
+            std.append(count_4)
+            #sharpe
+            count_5=(count_2-data_rate_rf)/count_4
+            sharpe.append(count_5)
+        #对于list，当用来合成dataframe时可以直接用columns=[]来赋予行名，但dataframe转换dataframe则不能
+        data_describe=pd.concat([pd.DataFrame(keys),pd.DataFrame(lens,columns=['lens']),pd.DataFrame(values,columns=['return']),
+                                 pd.DataFrame(r_base,columns=['base']),pd.DataFrame(std,columns=['std']),
+                                 pd.DataFrame(sharpe,columns=['sharpe'])],axis=1)
+        data_describe=data_describe[data_describe['lens']>=180]
+        # 最大回撤
+        keys_2=list(data_describe['cp_id'])
+        max_min=[]
+        for i in keys_2:
+            per_max_min=[]
+            for j in range(0,data_rate_merge[i].count()):
+                count=(data_rate_merge[i][data_rate_merge[i].isna() != True][j]-data_rate_merge[i][data_rate_merge[i].isna() != True][j:].min())\
+                      /data_rate_merge[i][data_rate_merge[i].isna() != True][j]
+                per_max_min.append(count)
+            max_min.append(max(per_max_min))
+        max_min=pd.DataFrame(max_min,columns=['max_min'])
+        data_describe=data_describe.reset_index(drop=True)
+        data_describe=pd.concat([data_describe,max_min],axis=1)
+        #base表和describe合并并分类
+        data_base=data_describe.merge(data_base,on='cp_id',how='left')
+        data_bond, data_equity, data_mix = data_base[data_base['product_type'] == 1], data_base[
+            data_base['product_type'] == 2], data_base[data_base['product_type'] == 4]
+
+        #列表相乘[a*b for a,b in zip(lista,listb)]
+        #jensen
+        data_rate_merge_ratio = data_rate_merge.pct_change(fill_method=None)
+        data_rate_em=data_rate_merge[list(data_equity['cp_id'])+list(data_mix['cp_id'])+['close_price']]
+        r=data_describe.set_index('cp_id').T[list(data_rate_em.columns)].T[['return','base']]
+        beta=[]
+        for i in data_rate_em.columns:
+            r_i=data_rate_em[i][(data_rate_em[i].isna()!=True)&(data_rate_em['close_price'].isna()!=True)]
+            r_m=data_rate_em['close_price'][(data_rate_em[i].isna() != True) & (data_rate_em['close_price'].isna() != True)]
+            r_i,r_m=r_i.pct_change()[1:],r_m.pct_change()[1:]
+            count=np.cov(r_i,r_m)
+            count_market,count_cov=count[1,1],count[0,1]
+            count_beta=count_cov/count_market
+            beta.append(count_beta)
+        beta=pd.DataFrame(beta,columns=['beta'])
+        #当必须要保存一个表的列名，而另一个表并没有列名时，不能使用concat，此时使用append,但结果与concat一样，r.append(beta)
+        r=r.reset_index()
+        r_all=pd.concat([r,beta],axis=1)
+        r_all['jensen']=r_all['return']-data_rate_rf-r_all['beta']*(r_all['base']-data_rate_rf)
+        #求值所在索引，使用npwhere输出元组，极不好用，只能直接索引如data_rate_merge[4398][data_rate_merge[4398].isna()].index
+        #(pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[0])-pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[1])).days
+        #但如果使用上式，将会不能对整个矩阵起作用，只能for循环，因为index跑出来只有一个
+        #最终决定使用npwhere，虽然单条件输出为元组，但当指定值时可以直接引用。np.where(data_rate_merge[4398].isna(),data_rate_merge[4398].index,0)[0]
+        #求位置索引绝不要使用npwhere！以下为不适用interpolate填补的做法，当然也可以先使用interpolate填补后计算count，更方便。
+        data_base=data_base.merge(r_all[['cp_id','beta','jensen']],on='cp_id',how='outer')
+        return data_base,data_rate_merge,data_300
+
+    def merge_fund(self):
+        data_base_1=self.data_fund[0]
+        data_base_2=self.data_fund[1]
+
+        data_base=data_base_1.merge(data_base_2,on='fund_code',how='left')
+        data_nv = self.data_fund[4][['fund_code','trading_date','accumulated_net_value']]
+        data_rf=self.data_index[1][['trading_date','bond_1y']].set_index('trading_date')
+        data_300=self.data_index[0][['index_date', 'close_price']]
+        data_300['index_date'] = data_300['index_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_300=data_300.set_index('index_date')
+        data_300=data_300.astype(float)
+        data_nv['accumulated_net_value']=data_nv['accumulated_net_value'].astype(float)
+        data_rate=data_nv.pivot_table(index='trading_date', columns='fund_code', values='accumulated_net_value')
+
+        #data_rate=data_rate.interpolate(limit_area='inside'),使用inside仅对内部进行填充
+        data_rate_merge = data_rate.reset_index()
+        #对时间字符串merge，务必要先使用strftime,否则·可能无结果。
+        data_rate_merge['trading_date'] = data_rate_merge['trading_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_rate_merge=data_rate_merge.set_index('trading_date')
+        data_rate_merge=data_rate_merge.merge(data_300,left_index=True,right_index=True,how='left')
+        keys = pd.DataFrame(list(data_rate_merge.columns), columns=['fund_code'])
+        data_base = data_base.merge(keys, left_on='fund_code', right_on='fund_code', how='inner')
+        #data_rate_merge_ratio = data_rate_merge.pct_change(limit=1)
+        #如果不加limit，pct_change默认即使只有一个值也要进行计算并对缺失值填充
+        data_rate_rf=float(data_rf.iloc[0,0])  #无风险利率
+        # 市场组合利率年化
+        data_rate_market=float((data_300.iloc[-1,0]-data_300.iloc[0,0])/data_300.iloc[0,0])*365/(pd.to_datetime(data_300.index)[-1]-pd.to_datetime(data_300.index)[0]).days
+        lens=[]
+        values=[]
+        r_base=[]
+        std=[]
+        sharpe=[]
+        jensen=[]
+        for i in data_rate_merge.columns:
+            #每个产品跨越天数
+            count_1=(pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[-1])-pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[0])).days
+            lens.append(count_1)
+            #年化回报
+            count_2=(data_rate_merge[i][data_rate_merge[i].isna()==False][-1]-data_rate_merge[i][data_rate_merge[i].isna()==False][0])/data_rate_merge[i][data_rate_merge[i].isna()==False][0]*365/count_1
+            values.append(count_2)
+            #iloc【1，：】求出来是array，需要用索引变成值,.values可以求到切片出来的dataframe等结构下的值，不用values最终结果是切片，不能直接计算！但iloc[1,1]等指定行列可以求出具体值,
+            # 包括直接在后索引，如同时定位具体横纵坐标，则可以取到数值，如仅一个坐标，哪怕只有一个数值也是一个切片。
+            #市场组合年化回报
+            try:
+                count_3 = (data_300[data_300.index <= pd.to_datetime(
+                    data_rate_merge[i][data_rate_merge[i].isna() == False].index[-1])].iloc[-1, 0] - data_300[
+                               data_300.index >= pd.to_datetime(
+                                   data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]) / \
+                          data_300[data_300.index >= pd.to_datetime(
+                              data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]*365/count_1
+            except:count_3=data_rate_market
+            r_base.append(count_3)
+            #标准差
+            try:
+                count_4=np.sqrt(np.var(data_rate_merge[i])*365/count_1)
+            except:
+                count_4=np.nan
+            std.append(count_4)
+            #sharpe
+            count_5=(count_2-data_rate_rf)/count_4
+            sharpe.append(count_5)
+        #对于list，当用来合成dataframe时可以直接用columns=[]来赋予行名，但dataframe转换dataframe则不能
+        data_describe=pd.concat([pd.DataFrame(keys),pd.DataFrame(lens,columns=['lens']),pd.DataFrame(values,columns=['return']),
+                                 pd.DataFrame(r_base,columns=['base']),pd.DataFrame(std,columns=['std']),
+                                 pd.DataFrame(sharpe,columns=['sharpe'])],axis=1)
+        data_describe=data_describe[data_describe['lens']>=180]
+        # 最大回撤
+        keys_2=list(data_describe['fund_code'])
+        max_min=[]
+        for i in keys_2:
+            per_max_min=[]
+            for j in range(0,data_rate_merge[i].count()):
+                count=(data_rate_merge[i][data_rate_merge[i].isna() != True][j]-data_rate_merge[i][data_rate_merge[i].isna() != True][j:].min())\
+                      /data_rate_merge[i][data_rate_merge[i].isna() != True][j]
+                per_max_min.append(count)
+            max_min.append(max(per_max_min))
+        max_min=pd.DataFrame(max_min,columns=['max_min'])
+        data_describe=data_describe.reset_index(drop=True)
+        data_describe=pd.concat([data_describe,max_min],axis=1)
+        #base表和describe合并并分类
+        data_base=data_describe.merge(data_base,on='fund_code',how='left')
+        # `fund_type`  '基金类型:1.股票型；\r\n   2.债券型；  3.混合型；  4.货币型；  5.商品型；  99.其他另类投资',
+        data_bond, data_equity, data_mix = data_base[data_base['fund_type'] == 2], data_base[
+            data_base['fund_type'] == 1], data_base[data_base['fund_type'] == 3]
+
+        #列表相乘[a*b for a,b in zip(lista,listb)]
+        #jensen
+        data_rate_merge_ratio = data_rate_merge.pct_change(fill_method=None)
+        data_rate_em=data_rate_merge[list(data_equity['fund_code'])+list(data_mix['fund_code'])+['close_price']]
+        r=data_describe.set_index('fund_code').T[list(data_rate_em.columns)].T[['return','base']]
+        beta=[]
+        for i in data_rate_em.columns:
+            r_i=data_rate_em[i][(data_rate_em[i].isna()!=True)&(data_rate_em['close_price'].isna()!=True)]
+            r_m=data_rate_em['close_price'][(data_rate_em[i].isna() != True) & (data_rate_em['close_price'].isna() != True)]
+            r_i,r_m=r_i.pct_change()[1:],r_m.pct_change()[1:]
+            count=np.cov(r_i,r_m)
+            count_market,count_cov=count[1,1],count[0,1]
+            count_beta=count_cov/count_market
+            beta.append(count_beta)
+        beta=pd.DataFrame(beta,columns=['beta'])
+        #当必须要保存一个表的列名，而另一个表并没有列名时，不能使用concat，此时使用append,但结果与concat一样，r.append(beta)
+        r=r.reset_index()
+        r_all=pd.concat([r,beta],axis=1)
+        r_all['jensen']=r_all['return']-data_rate_rf-r_all['beta']*(r_all['base']-data_rate_rf)
+        #求值所在索引，使用npwhere输出元组，极不好用，只能直接索引如data_rate_merge[4398][data_rate_merge[4398].isna()].index
+        #(pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[0])-pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[1])).days
+        #但如果使用上式，将会不能对整个矩阵起作用，只能for循环，因为index跑出来只有一个
+        #最终决定使用npwhere，虽然单条件输出为元组，但当指定值时可以直接引用。np.where(data_rate_merge[4398].isna(),data_rate_merge[4398].index,0)[0]
+        #求位置索引绝不要使用npwhere！以下为不适用interpolate填补的做法，当然也可以先使用interpolate填补后计算count，更方便。
+        data_base=data_base.merge(r_all[['fund_code','beta','jensen']],on='fund_code',how='outer')
+        return data_base,data_rate_merge,data_300
+
+
+
+
+
+
+if __name__ == "__main__":
+    load=read_data('2020-01-01','2020-12-31')
+    data1=load.bank_read()
+    data2=load.index_read()
+    data3=load.fund_read()
+    process=handle(data_bank=data1,data_index=data2,data_fund=data3)
+    data_base, data_rate_merge, data_300=process.merge_fund()
