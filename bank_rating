@@ -1,0 +1,330 @@
+import pymysql
+import numpy as np
+import pandas as pd
+import re
+from datetime import timedelta,datetime,date
+import pymysql
+import numpy as np
+import pandas as pd
+import re
+from datetime import timedelta,datetime,date
+import warnings
+warnings.filterwarnings("ignore")
+class read_bank:
+    def __init__(self,start_date,end_date):
+        self.start_date=start_date
+        self.end_date=end_date
+
+    def bank_read(self):
+        data={}
+        #理财top10资产
+        py_product_assets_position_top10='select * from py_product_assets_position_top10 where report_date>="{}" and ' \
+                                         'report_date<="{}"'.format(self.start_date,self.end_date)
+        #理财持仓资产分类
+        py_product_assets_position_type='select * from py_product_assets_position_type where report_date>="{}" and ' \
+                                         'report_date<="{}"'.format(self.start_date,self.end_date)
+        #理财基础信息,'产品类型（固定收益类）:\r\n1.固定收益类\r\n2.权益类\r\n3.商品及金融衍生品类\r\n4.混合类','产品子类型:1.纯固收2.固收+ 3.偏股混合4.偏债混合'
+        product_base_bank_data_lc='select * from product_base_bank_data_lc'
+        product_base_bank_data_lc_desc='select cp_id,product_type,is_subsidiary_products,product_type_son from product_base_bank_data_lc_desc'
+        #理财净值
+        product_jz_lc='select * from product_jz_lc where jz_date>="{}" and jz_date<="{}"'.format(self.start_date,self.end_date)
+        get_bank=[product_base_bank_data_lc,product_base_bank_data_lc_desc,py_product_assets_position_type,py_product_assets_position_top10,product_jz_lc]
+        for i in range(0, len(get_bank)):
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database='py_product',
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_bank[i]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(i))])
+        return data
+
+    def index_read(self):
+        hs300 = 'select index_date, index_code, close_price from py_stock_index_marketing_info_2_1 where ' \
+             'index_code ="000300" and DATE(index_date) > "{}" and DATE(index_date) <= "{}"'.format(self.start_date, self.end_date)
+
+
+        risk_free = 'select trading_date, bond_1y, shibor_1m from py_etl_risk_free_rate_daily_2_1 where ' \
+             'DATE(trading_date) > "{}" and DATE(trading_date) <= "{}"'.format(self.start_date, self.end_date)
+        get_index=[hs300 , risk_free]
+        db=['py_stock_2_1','py_etl']
+        data={}
+        for i in range(0, len(get_index)):
+            conn = pymysql.connect(host='192.168.0.153', user='jcyj', password='jcyjQwer', database=db[i],
+                                   charset='utf8', port=3306,
+                                   cursorclass=pymysql.cursors.DictCursor)
+            query = get_index[i]
+            cursor = conn.cursor()
+            cursor.execute(query)
+            fetch = cursor.fetchall()
+            locals()['data{}'.format(str(i))] = {i: pd.DataFrame(fetch)}
+            data.update(locals()['data{}'.format(str(i))])
+        return data
+
+    def bank_base(self,data,data2):
+        data_base_1=data[0]
+        data_base_2=data[1]
+        data_nv = data[4]
+        data_rf=data2[1][['trading_date','bond_1y']].set_index('trading_date')
+        data_300=data2[0][['index_date', 'close_price']]
+        data_300['index_date'] = data_300['index_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_300=data_300.set_index('index_date')
+        data_300=data_300.astype(float)
+
+        data_base=data_base_1.merge(data_base_2,on='cp_id',how='left')
+        data_nv['jz_zm_day']=data_nv['jz_zm_day'].astype(float)
+        data_rate=data_nv.pivot_table(index='jz_date', columns='cp_id', values='jz_zm_day')
+
+
+        #data_rate=data_rate.interpolate(limit_area='inside'),使用inside仅对内部进行填充
+        data_rate_merge = data_rate.reset_index()
+        #对时间字符串merge，务必要先使用strftime,否则·可能无结果。
+        data_rate_merge['jz_date'] = data_rate_merge['jz_date'].apply(lambda x: datetime.strftime(x, '%Y-%m-%d'))
+        data_rate_merge=data_rate_merge.set_index('jz_date')
+        data_rate_merge=data_rate_merge.merge(data_300,left_index=True,right_index=True,how='left')
+        keys = pd.DataFrame(list(data_rate_merge.columns), columns=['cp_id'])
+        data_base = data_base.merge(keys, left_on='cp_id', right_on='cp_id', how='inner')
+        #data_rate_merge_ratio = data_rate_merge.pct_change(limit=1)
+        #如果不加limit，pct_change默认即使只有一个值也要进行计算并对缺失值填充
+        data_rate_rf=float(data_rf.iloc[0,0])  #无风险利率
+        # 市场组合利率年化
+        data_rate_market=float((data_300.iloc[-1,0]-data_300.iloc[0,0])/data_300.iloc[0,0])*365/(pd.to_datetime(data_300.index)[-1]-pd.to_datetime(data_300.index)[0]).days
+        lens=[]
+        values=[]
+        r_base=[]
+        std=[]
+        sharpe=[]
+        jensen=[]
+        for i in data_rate_merge.columns:
+            #每个产品跨越天数
+            count_1=(pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[-1])-pd.to_datetime(data_rate_merge[i][data_rate_merge[i].isna()==False].index[0])).days
+            lens.append(count_1)
+            #年化回报
+            count_2=(data_rate_merge[i][data_rate_merge[i].isna()==False][-1]-data_rate_merge[i][data_rate_merge[i].isna()==False][0])/data_rate_merge[i][data_rate_merge[i].isna()==False][0]*365/count_1
+            values.append(count_2)
+            #iloc【1，：】求出来是array，需要用索引变成值,.values可以求到切片出来的dataframe等结构下的值，不用values最终结果是切片，不能直接计算！但iloc[1,1]等指定行列可以求出具体值,
+            # 包括直接在后索引，如同时定位具体横纵坐标，则可以取到数值，如仅一个坐标，哪怕只有一个数值也是一个切片。
+            #市场组合年化回报
+            try:
+                count_3 = (data_300[data_300.index <= pd.to_datetime(
+                    data_rate_merge[i][data_rate_merge[i].isna() == False].index[-1])].iloc[-1, 0] - data_300[
+                               data_300.index >= pd.to_datetime(
+                                   data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]) / \
+                          data_300[data_300.index >= pd.to_datetime(
+                              data_rate_merge[i][data_rate_merge[i].isna() == False].index[0])].iloc[0, 0]*365/count_1
+            except:count_3=data_rate_market
+            r_base.append(count_3)
+            #标准差
+            try:
+                count_4=np.sqrt(np.var(data_rate_merge[i])*365/count_1)
+            except:
+                count_4=np.nan
+            std.append(count_4)
+            #sharpe
+            count_5=(count_2-data_rate_rf)/count_4
+            sharpe.append(count_5)
+        #对于list，当用来合成dataframe时可以直接用columns=[]来赋予行名，但dataframe转换dataframe则不能
+        data_describe=pd.concat([pd.DataFrame(keys),pd.DataFrame(lens,columns=['lens']),pd.DataFrame(values,columns=['return']),
+                                 pd.DataFrame(r_base,columns=['base']),pd.DataFrame(std,columns=['std']),
+                                 pd.DataFrame(sharpe,columns=['sharpe'])],axis=1)
+        data_describe=data_describe[data_describe['lens']>=180]
+        # 最大回撤
+        keys_2=list(data_describe['cp_id'])
+        max_min=[]
+        for i in keys_2:
+            per_max_min=[]
+            for j in range(0,data_rate_merge[i].count()):
+                count=(data_rate_merge[i][data_rate_merge[i].isna() != True][j]-data_rate_merge[i][data_rate_merge[i].isna() != True][j:].min())\
+                      /data_rate_merge[i][data_rate_merge[i].isna() != True][j]
+                per_max_min.append(count)
+            max_min.append(max(per_max_min))
+        max_min=pd.DataFrame(max_min,columns=['max_min'])
+        data_describe=data_describe.reset_index(drop=True)
+        data_describe=pd.concat([data_describe,max_min],axis=1)
+        #base表和describe合并并分类
+        data_base=data_describe.merge(data_base,on='cp_id',how='left')
+        data_bond, data_equity, data_mix = data_base[data_base['product_type'] == 1], data_base[
+            data_base['product_type'] == 2], data_base[data_base['product_type'] == 4]
+
+        #列表相乘[a*b for a,b in zip(lista,listb)]
+        #jensen
+        data_rate_merge_ratio = data_rate_merge.pct_change(fill_method=None)
+        data_rate_em=data_rate_merge[list(data_equity['cp_id'])+list(data_mix['cp_id'])+['close_price']]
+        r=data_describe.set_index('cp_id').T[list(data_rate_em.columns)].T[['return','base']]
+        beta=[]
+        for i in data_rate_em.columns:
+            r_i=data_rate_em[i][(data_rate_em[i].isna()!=True)&(data_rate_em['close_price'].isna()!=True)]
+            r_m=data_rate_em['close_price'][(data_rate_em[i].isna() != True) & (data_rate_em['close_price'].isna() != True)]
+            r_i,r_m=r_i.pct_change()[1:],r_m.pct_change()[1:]
+            count=np.cov(r_i,r_m)
+            count_market,count_cov=count[1,1],count[0,1]
+            count_beta=count_cov/count_market
+            beta.append(count_beta)
+        beta=pd.DataFrame(beta,columns=['beta'])
+        #当必须要保存一个表的列名，而另一个表并没有列名时，不能使用concat，此时使用append,但结果与concat一样，r.append(beta)
+        r=r.reset_index()
+        r_all=pd.concat([r,beta],axis=1)
+        r_all['jensen']=r_all['return']-data_rate_rf-r_all['beta']*(r_all['base']-data_rate_rf)
+        #求值所在索引，使用npwhere输出元组，极不好用，只能直接索引如data_rate_merge[4398][data_rate_merge[4398].isna()].index
+        #(pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[0])-pd.to_datetime(data_rate_merge[4398][data_rate_merge[4398].isna()].index[1])).days
+        #但如果使用上式，将会不能对整个矩阵起作用，只能for循环，因为index跑出来只有一个
+        #最终决定使用npwhere，虽然单条件输出为元组，但当指定值时可以直接引用。np.where(data_rate_merge[4398].isna(),data_rate_merge[4398].index,0)[0]
+        #求位置索引绝不要使用npwhere！以下为不适用interpolate填补的做法，当然也可以先使用interpolate填补后计算count，更方便。
+        data_base=data_base.merge(r_all[['cp_id','beta','jensen']],on='cp_id',how='outer')
+        return data_base,data_rate_merge,data_300
+
+    def bank_pos(self,data):
+        data_pos_type=data[2]
+        data_pos_type['direct_scale'],data_pos_type['direct_proportion'],data_pos_type['actual_scale'],data_pos_type['actual_proportion']\
+            =data_pos_type['direct_scale'].astype(float),data_pos_type['direct_proportion'].astype(float),\
+             data_pos_type['actual_scale'].astype(float),data_pos_type['actual_proportion'].astype(float)
+        data_pos_top=data[3]
+        data_pos_top['asset_scale'], data_pos_top['actual_proportion'] =  data_pos_top['asset_scale'].astype(float), data_pos_top['actual_proportion'].astype(float)
+        #data_pos_type_table=pd.pivot_table(index='report_date', columns='jfz_id', values='accumulated_net')
+        data_pos=pd.DataFrame()
+        for j in list(pd.unique(data_pos_type['report_date'])):
+            for i in list(pd.unique(data_pos_type[data_pos_type['report_date']==j]['cp_id'])):
+                data_pos=data_pos.append([{'cp_id':i,'report_date':j,'assets_type':
+                    list(data_pos_type[(data_pos_type['cp_id']==i)&(data_pos_type['report_date']==j)]['assets_type']),
+                                           'direct_scale':list(data_pos_type[(data_pos_type['cp_id']==i)&(data_pos_type['report_date']==j)]['direct_scale']),
+                                           'direct_proportion':list(data_pos_type[(data_pos_type['cp_id']==i)&(data_pos_type['report_date']==j)]['direct_proportion']),
+                                           'actual_scale':list(data_pos_type[(data_pos_type['cp_id']==i)&(data_pos_type['report_date']==j)]['actual_scale']),
+                                           'actual_proportion':list(data_pos_type[(data_pos_type['cp_id']==i)&(data_pos_type['report_date']==j)]['actual_proportion'])}])
+        data_pos_2=pd.DataFrame()
+        for j in list(pd.unique(data_pos_top['report_date'])):
+            for i in list(pd.unique(data_pos_top[data_pos_top['report_date']==j]['cp_id'])):
+                data_pos_2=data_pos_2.append([{'cp_id':i,'report_date':j,'assets_type':
+                    list(data_pos_top[(data_pos_top['cp_id']==i)&(data_pos_top['report_date']==j)]['asset_rank']),
+                                           'asset_name':list(data_pos_top[(data_pos_top['cp_id']==i)&(data_pos_top['report_date']==j)]['asset_name']),
+                                           'asset_type':list(data_pos_top[(data_pos_top['cp_id']==i)&(data_pos_top['report_date']==j)]['asset_type']),
+                                           'asset_scale':list(data_pos_top[(data_pos_top['cp_id']==i)&(data_pos_top['report_date']==j)]['asset_scale']),
+                                           'actual_proportion':list(data_pos_top[(data_pos_top['cp_id']==i)&(data_pos_top['report_date']==j)]['actual_proportion'])}])
+
+
+        return data_pos,data_pos_2
+
+    def bank_pos_2(self,data,data_base):
+        data_pos_type = data[2]
+        data_pos_type['actual_scale'].fillna(data_pos_type['direct_scale'], inplace=True)
+        data_pos_type['actual_scale'] = data_pos_type['actual_scale'].astype(float)
+        data_pos_type['actual_proportion'].fillna(data_pos_type['direct_proportion'], inplace=True)
+        data_pos_type['actual_proportion'] = data_pos_type['actual_proportion'].astype(float)
+        data_pos_top = data[3]
+        data_pos_top['asset_scale'] = data_pos_top['asset_scale'].astype(float)
+        data_pos_top['actual_proportion'] = data_pos_top['actual_proportion'].astype(float)
+        # 用于个别产品对比
+        data_chicang = {}
+        data_top10 = {}
+        for i in list(data_base['cp_id']):
+            count_1 = {i: data_pos_type[data_pos_type['cp_id'] == i]}
+            count_2 = {i: data_pos_top[data_pos_top['cp_id'] == i]}
+            data_chicang.update(count_1)
+            data_top10.update(count_2)
+
+#for循环对变量赋值是不会成功的，例如i=i+1这种，i值发生变化，但原变量值不发生变化。但if循环好像可以
+'''
+重点：
+for i in a,b,c:
+    i=i+1
+    无法赋值成功,也就是说，被赋值变量不能是i，要是一个固定的东西。
+d=[a,b,c]
+for i in range(0,3):
+  d[i]=d[i]+1
+就可以
+或者使用i.loc,i['']
+for循环有时候会直接跳过不能执行的语句，后续正确的语句也会被忽略掉
+
+'''
+
+if __name__ == "__main__":
+    load=read_bank('2020-01-01','2020-12-31')
+    data1=load.bank_read()
+    data2=load.index_read()
+    data_base, data_rate_merge, data_300=load.bank_base(data=data1,data2=data2)
+    '''
+    data_pos,data_pos_2=load.bank_pos(data=data1)
+    with pd.ExcelWriter('C:/Users/Administrator/Desktop/评价结果2021.xlsx') as writer:
+                data_base.to_excel(writer, sheet_name='data_base', index=False)
+                data_rate_merge.T.to_excel(writer, sheet_name='data_rate_merge', index=False)
+                data_300.to_excel(writer, sheet_name='data_300', index=False)
+                data_pos.to_excel(writer, sheet_name='data_pos', index=False)
+                data_pos_2.to_excel(writer, sheet_name='data_pos_2', index=False)
+    '''
+'''
+#筛选fof产品
+data_fof=data_base[data_base['cp_name'].str.contains('fof',case=False,na=False)]
+data_fof1=data_fof[data_fof['product_type']==1]
+data_fof2=data_fof[data_fof['product_type']==2]
+data_fof4=data_fof[data_fof['product_type']==4]
+
+
+
+#用于整体分析
+# 资产类别:1.现金及银行存款2.同业存单3.拆放同业及买入返售4.债券5.理财直接融资工具6.新增可投资资产7.非标准化债权类资产8.权益类投资
+# 9.金融衍生品10.代客境外理财投资qdii 11.商品类资产12.另类资产 13.公募基金 14.私募基金 15.资产管理产品 16.委外投资——协议方式
+# 17.合计18.货币市场类 19.固定收益类',
+concat_1=data_pos_type[data_pos_type['cp_id']==list(data_fof1['cp_id'])[0]]
+#append对dataframe使用时，要赋值，不能直接像对list一样append
+for i in list(data_fof1['cp_id'])[1:]:
+    count_1=data_pos_type[data_pos_type['cp_id']==i]
+    concat_1=concat_1.append(count_1)
+data_chicang_2_gushou=concat_1['actual_scale'].groupby([concat_1['report_date'],concat_1['assets_type']]).sum().unstack(1)
+#混合类
+concat_2=data_pos_type[data_pos_type['cp_id']==list(data_fof4['cp_id'])[0]]
+for i in list(data_fof4['cp_id'])[1:]:
+    count_2=data_pos_type[data_pos_type['cp_id']==i]
+    concat_2=concat_2.append(count_2)
+data_chicang_2_mix=concat_2['actual_scale'].groupby([concat_2['report_date'],concat_2['assets_type']]).sum().unstack(1)
+#权益类
+concat_3=data_pos_type[data_pos_type['cp_id']==list(data_fof2['cp_id'])[0]]
+data_chicang_2_quanyi=concat_3['actual_scale'].groupby([concat_3['report_date'],concat_3['assets_type']]).sum().unstack(1)
+with pd.ExcelWriter('C:/Users/Administrator/Desktop/评价结果2021_2.xlsx') as writer:
+    data_chicang_2_gushou.to_excel(writer, sheet_name='data_chicang_2_gushou', index=True)
+    data_chicang_2_mix.to_excel(writer, sheet_name='data_chicang_2_mix', index=True)
+    data_chicang_2_quanyi.to_excel(writer, sheet_name='data_chicang_2_quanyi', index=True)
+
+
+concat_4=data_pos_top[data_pos_top['cp_id']==list(data_fof1['cp_id'])[0]]
+#append对dataframe使用时，要赋值，不能直接像对list一样append
+for i in list(data_fof1['cp_id'])[1:]:
+    count_1=data_pos_top[data_pos_top['cp_id']==i]
+    concat_4=concat_4.append(count_1)
+data_chicang_3_gushou=concat_4['asset_scale'].groupby([concat_4['report_date'],concat_4['asset_name']]).sum().unstack(0)
+#混合类
+concat_5=data_pos_top[data_pos_top['cp_id']==list(data_fof4['cp_id'])[0]]
+for i in list(data_fof4['cp_id'])[1:]:
+    count_2=data_pos_top[data_pos_top['cp_id']==i]
+    concat_5=concat_5.append(count_2)
+data_chicang_3_mix=concat_5['asset_scale'].groupby([concat_5['report_date'],concat_5['asset_name']]).sum().unstack(0)
+#权益类
+concat_6=data_pos_top[data_pos_top['cp_id']==list(data_fof2['cp_id'])[0]]
+data_chicang_3_quanyi=concat_6['asset_scale'].groupby([concat_6['report_date'],concat_6['asset_name']]).sum().unstack(0)
+with pd.ExcelWriter('C:/Users/Administrator/Desktop/评价结果2021_3.xlsx') as writer:
+    data_chicang_3_gushou.to_excel(writer, sheet_name='data_chicang_3_gushou', index=True)
+    data_chicang_3_mix.to_excel(writer, sheet_name='data_chicang_3_mix', index=True)
+    data_chicang_3_quanyi.to_excel(writer, sheet_name='data_chicang_3_quanyi', index=True)
+
+
+
+concat_7=data_pos_top[data_pos_top['cp_id']==list(data_fof1['cp_id'])[0]]
+#append对dataframe使用时，要赋值，不能直接像对list一样append
+for i in list(data_fof1['cp_id'])[1:]:
+    count_1=data_pos_top[data_pos_top['cp_id']==i]
+    concat_7=concat_7.append(count_1)
+data_chicang_4_gushou=concat_7['cp_id'].groupby([concat_7['report_date'],concat_7['asset_rank'],concat_7['asset_name']]).count().unstack(0)
+#混合类
+concat_8=data_pos_top[data_pos_top['cp_id']==list(data_fof4['cp_id'])[0]]
+for i in list(data_fof4['cp_id'])[1:]:
+    count_2=data_pos_top[data_pos_top['cp_id']==i]
+    concat_8=concat_8.append(count_2)
+data_chicang_4_mix=concat_8['cp_id'].groupby([concat_8['report_date'],concat_8['asset_rank'],concat_8['asset_name']]).count().unstack(0)
+#权益类
+concat_9=data_pos_top[data_pos_top['cp_id']==list(data_fof2['cp_id'])[0]]
+data_chicang_4_quanyi=concat_9['cp_id'].groupby([concat_9['report_date'],concat_9['asset_rank'],concat_9['asset_name']]).count().unstack(0)
+with pd.ExcelWriter('C:/Users/Administrator/Desktop/评价结果2021_4.xlsx') as writer:
+    data_chicang_4_gushou.to_excel(writer, sheet_name='data_chicang_4_gushou', index=True)
+    data_chicang_4_mix.to_excel(writer, sheet_name='data_chicang_4_mix', index=True)
+    data_chicang_4_quanyi.to_excel(writer, sheet_name='data_chicang_4_quanyi', index=True)
+'''
